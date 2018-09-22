@@ -6,12 +6,25 @@ import cv2
 from sklearn.cluster import KMeans
 import matplotlib.pylab as plt
 import matplotlib.patches as patches
-import kmedoids
-ROOT_DIR = os.path.abspath("../")
-sys.path.append(os.path.join(ROOT_DIR, "samples/coco/"))
-MODEL_DIR = os.path.join(ROOT_DIR, "logs")
+from sklearn.mixture import GMM
+from colorlabeler import ColorLabeler
+
+import warnings
+warnings.filterwarnings("ignore")
+
+cl = ColorLabeler()
+
+
+ROOT_DIR = os.path.abspath(os.getcwd())
+
+sys.path.append(ROOT_DIR)
 import mrcnn.model as modellib
+
+sys.path.append(os.path.join(ROOT_DIR, "samples/coco/"))
 import coco
+
+MODEL_DIR = os.path.join(ROOT_DIR, "logs")
+COCO_MODEL_PATH = os.path.join(ROOT_DIR, "mask_rcnn_coco.h5")
 
 
 class InferenceConfig(coco.CocoConfig):
@@ -21,14 +34,14 @@ class InferenceConfig(coco.CocoConfig):
     IMAGES_PER_GPU = 1
 
 config = InferenceConfig()
-config.display()
+#config.display()
 
 model = modellib.MaskRCNN(mode="inference", model_dir=MODEL_DIR, config=config)
 
 # Load weights trained on MS-COCO
 model.load_weights(COCO_MODEL_PATH, by_name=True)
 
-file_name = 'c_h_1.jpg'
+file_name = '1G1FF3D77H0120089_1.jpg'
 execution_path = os.getcwd()
 
 
@@ -58,16 +71,18 @@ if len(detections) !=0:
 else:
     array = []
 
-        # print(eachObject["name"] , " : " , eachObject["percentage_probability"] )
+
 
 
 def preprocess(rgb):
     blurred = cv2.GaussianBlur(rgb, (5, 5), 0)
     gray = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
     #   print ('gray_shape', gray.shape)
-    binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, \
-                          cv2.THRESH_BINARY, 11, 2)
-
+    binary = cv2.threshold(gray, 60, 255, cv2.THRESH_BINARY)[1]
+    # binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, \
+    #                       cv2.THRESH_BINARY, 11, 2)
+   # binary = binary - binary.max()
+    #binary[binary==255] = 1
     return binary
 
 
@@ -94,8 +109,6 @@ def draw_countours(cnts, sub_img, mask):
         c = c.astype("float")
         c *= 1
         c = c.astype("int")
-
-
         cv2.drawContours(mask, [c], -1, (255, 255, 255), -1)
         pts = np.where(mask == 255)
         mask[mask == 255] = 1
@@ -104,44 +117,85 @@ def draw_countours(cnts, sub_img, mask):
 
 
 def run_kmeans(lst_intensities):
+
     array = np.array(lst_intensities[0])
-    kmeans = KMeans(n_clusters=3, max_iter=10000)
+
+    kmeans = KMeans(init='k-means++',n_clusters=3,random_state=0)
     kmeans.fit(array)
+    gmm = GMM(n_components=3).fit(array)
+
+    #print (gmm.cluster_centers_)
+    labels = gmm.predict(array)
+    kmeans_labels = kmeans.predict(array)
 
     unique_l, counts_l = np.unique(kmeans.labels_, return_counts=True)
-
+    print ('kmeans', unique_l, counts_l)
     sort_ix = np.argsort(counts_l)
+    print('sort_ix', sort_ix)
     sort_ix = sort_ix[::-1]
+    print('rev', sort_ix)
 
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    x_from = 0.05
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111)
+    # x_from = 0.05
+    # #print(kmeans.cluster_centers_[sort_ix])
+    # for cluster_center in kmeans.cluster_centers_[sort_ix]:
+    #     print('point RGB', int(cluster_center[2]), int(cluster_center[1]), int(cluster_center[0]))
+    #     ax.add_patch(patches.Rectangle((x_from, 0.05), 0.29, 0.9, alpha=None,
+    #                                    facecolor='#%02x%02x%02x' % (
+    #                                    int(cluster_center[2]), int(cluster_center[1]), int(cluster_center[0]))))
+    #     x_from = x_from + 0.31
+    #
+    # plt.show()
+    return kmeans.cluster_centers_[sort_ix][0]
 
-    for cluster_center in kmeans.cluster_centers_[sort_ix]:
-        print('point', int(cluster_center[2]), int(cluster_center[1]), int(cluster_center[0]))
-        ax.add_patch(patches.Rectangle((x_from, 0.05), 0.29, 0.9, alpha=None,
-                                       facecolor='#%02x%02x%02x' % (
-                                       int(cluster_center[2]), int(cluster_center[1]), int(cluster_center[0]))))
-        x_from = x_from + 0.31
+def make_segmentation_mask(image, mask):
+    img = image.copy()
+    img[:,:,0] *= mask
+    img[:,:,1] *= mask
+    img[:,:,2] *= mask
+    return img
 
-    plt.show()
+
+def find_pixels(rcnn_result, mask):
+    list_intensities = []
+    mask = mask*1
+    pts = np.where(mask == 1)
+    list_intensities.append(rcnn_result[pts[0], pts[1]])
+    return list_intensities
 
 
 if len(array) !=0:
-    sub_img, mask = extract_patch_mask(img, array)
-    cv2.imwrite('test.jpg', sub_img)
-    binary = preprocess(sub_img)
-    cnts = find_countours(binary)
-    lst_intensities, mask = draw_countours(cnts, sub_img, mask)
-    cv2.imshow('', sub_img)
+    sub_img, mask1 = extract_patch_mask(img, array)
+    results = model.detect([sub_img], verbose=1)
+    r = results[0]
+    mask = r['masks'][:, :, 0]
+    rcnn_result = make_segmentation_mask(sub_img, mask)
+    # cv2.imshow('r', rcnn_result)
+    # cv2.waitKey(0)
+    binary = preprocess(rcnn_result)
+    cv2.imshow('', binary)
     cv2.waitKey(0)
-    mul = mask * sub_img
-    cv2.imshow('', mul)
+    binary[binary==255] = 1
+    rcnn_result[:,:,0] *= binary
+    rcnn_result[:,:,1] *= binary
+    rcnn_result[:,:,2] *= binary
+    cv2.imshow('r', rcnn_result)
     cv2.waitKey(0)
-    run_kmeans(lst_intensities)
+    list_intensities = find_pixels(rcnn_result, binary)
+    # print (list_intensities)
+    # for i in list_intensities:
+    #     print (len(i))
+
+    bgr_arry = run_kmeans(list_intensities)
+    # rgb_arry_init = np.zeros((1, 1, 3), dtype="uint8")
+    # rgb_arry_init[0] = [r, g, b]
+    print ('bgr val', bgr_arry, type(bgr_arry))
+    val = cl.label(bgr_arry[::-1])
+#    print ('r,g,b', r,g,b)
+    print('index', val)
 else:
     print ('No car found')
-
 
 
 

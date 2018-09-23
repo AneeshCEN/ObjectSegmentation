@@ -59,7 +59,7 @@ class ColorLabeler:
         for (i, row) in enumerate(self.lab):
             # compute the distance between the current L*a*b*
             # color value and the mean of the image
-            print(row[0], mean)
+            #print(row[0], mean)
 
             d = dist.euclidean(row[0], mean)
             #d = cdist(row[0], mean, 'minkowski', p=2.)
@@ -69,7 +69,7 @@ class ColorLabeler:
             # if the distance is smaller than the current distance,
             # then update the bookkeeping variable
             if d < minDist[0]:
-                print ('row', row)
+                #print ('row', row)
                 minDist = (d, i)
 
         val = self.colorFrame.iloc[minDist[1]]
